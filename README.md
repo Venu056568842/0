@@ -15,75 +15,125 @@
 
 ---
 
-## 🗂️ Project Structure
+## 🏗️ Full System Structure & Workflow
+
+### 1. **Data Input & Validation (Pathway)**
+- **File Structure:**
+  - `data/uploads/Grocery_Inventory_and_Sales_Dataset.csv` – Main input CSV.
+- **Validation:**
+  - Checks if the file exists. If missing, logs an error and stops execution.
+  - Defines a strict schema via `InputSchema` using Pathway.
+  - Validates column existence and types (e.g., `Stock_Quantity` must be int).
+  - Invalid/malformed dates or missing fields are logged and not processed for expiry logic.
+- **Processing Steps:**
+  - Reads CSV via Pathway’s streaming API.
+  - Selects important columns and renames them for downstream use.
+  - Adds a computed `Expiring_Soon` flag (checks if items will expire within 7 days).
+  - Writes the cleaned and validated data to `data/processed/output.jsonl`.
+
+### 2. **Embeddings Generation & Indexing**
+- **File Structure:**
+  - `embed_inventory.py`
+  - `vectorstore/faiss_index/` – FAISS vector index for semantic search.
+- **Steps:**
+  - Loads `output.jsonl` and summarizes each record as a document.
+  - Embeds these using HuggingFace (`all-MiniLM-L6-v2`).
+  - Stores vectors in FAISS for fast context-aware retrieval.
+
+### 3. **Conversational Q&A with LangChain and Ollama**
+- **Files:**
+  - Console QA: Inline in your scripts (`main_pipeline.py` or similar).
+  - Streamlit UI: `app.py`
+- **Steps:**
+  - Loads the FAISS vectorstore.
+  - For each user query, retrieves the top-k relevant inventory records.
+  - Uses LangChain’s RetrievalQA pipeline with Ollama (phi3 model) to generate answers, using the retrieved context.
+  - Displays both the answer and the supporting source snippets.
+
+### 4. **Voice Alerts via OmniDimension**
+- **File:** `voice_alerts.py`
+- **How It Works:**
+  - Loads `output.jsonl`.
+  - Groups inventory items expiring in the next two months, by month.
+  - Generates a summary message (lists items, locations, stock, etc).
+  - Uses the [OmniDimension API](https://omnidimension.com) to send a phone call:
+    - Requires your OmniDimension API key, agent ID, and target phone number.
+    - If no items are expiring soon, delivers a “no expiry” message.
+  - **Input Validations:**
+    - Ensures required credentials are set.
+    - Only includes valid dates in expiry calculations.
+    - Skips and logs records with missing/invalid date fields.
+
+### 5. **Interactive Dashboard (Streamlit)**
+- **File:** `app.py`
+- **Features:**
+  - Modern UI with branding, styled components, and example queries.
+  - Accepts free-text questions and displays answers and sources.
+  - Uses the same QA retrieval chain as the CLI, but in a web interface.
+
+---
+
+## 🗂️ Top-to-Bottom Project Structure
 
 ```
 .
 ├── data/
-│   ├── uploads/Grocery_Inventory_and_Sales_Dataset.csv
-│   └── processed/output.jsonl
+│   ├── uploads/
+│   │   └── Grocery_Inventory_and_Sales_Dataset.csv      # INPUT: Raw inventory CSV
+│   └── processed/
+│       └── output.jsonl                                 # OUTPUT: Cleaned, flagged inventory data
 ├── vectorstore/
-│   └── faiss_index/
-├── main_pipeline.py
-├── embed_inventory.py
-├── voice_alerts.py
-├── app.py
-└── README.md
+│   └── faiss_index/                                     # FAISS vector index for embeddings
+├── main_pipeline.py                                     # ALL: Pathway pipeline (ETL, validation, flagging)
+├── embed_inventory.py                                   # Embedding inventory docs & building FAISS index
+├── voice_alerts.py                                      # Generates & sends expiry voice alerts via OmniDimension
+├── app.py                                               # Streamlit dashboard for Q&A
+└── README.md                                            # This file
 ```
 
 ---
 
-## ⚙️ Setup & Installation
+## 💡 Example Workflow
 
-### 1. **Clone the Repository**
+1. **Ingest & Clean Data**  
+   - User puts a CSV in `data/uploads/`.
+   - Pathway pipeline validates & processes, outputting a JSONL.
 
-```bash
-git clone https://github.com/your-username/inventory-spotter-ai.git
-cd inventory-spotter-ai
-```
+2. **Embed & Index**  
+   - `embed_inventory.py` reads JSONL, creates document embeddings, and builds a FAISS index.
 
-### 2. **Install Dependencies**
+3. **Ask Questions (CLI or UI)**  
+   - User asks inventory questions via terminal or Streamlit app.
+   - System retrieves relevant docs using FAISS + HuggingFace + LangChain.
+   - Answers are generated using Ollama LLM, with source snippets cited.
 
-```bash
-pip install pathway pandas langchain streamlit faiss-cpu huggingface-hub
-pip install langchain_community ollama omnidimension
-```
+4. **Voice Alerts**  
+   - `voice_alerts.py` runs (manually or on schedule).
+   - Finds items expiring in next 2 months, generates a message, and calls the manager via OmniDimension.
 
-> **Note**: For Ollama LLM, ensure you have the [Ollama server](https://ollama.com) running locally and `phi3` model downloaded.
+---
 
-### 3. **Prepare Data**
+## 🔎 Details: Pathway & OmniDimension Usage
 
-- Place your warehouse CSV at `data/uploads/Grocery_Inventory_and_Sales_Dataset.csv`.
+- **Pathway**  
+  - Powers the full ETL pipeline: input file validation, schema enforcement, row-wise cleaning, date parsing, and flagging for imminent expiry.
+  - Ensures only valid, consistent, and useful data is passed to downstream tasks.
+  - Graceful handling of invalid rows (logs and skips).
 
-### 4. **Run Data Pipeline**
+- **OmniDimension**  
+  - Handles automated voice alerts.
+  - Accepts a summary message and calls the provided phone number.
+  - Ensures decision makers are aware of upcoming expiry risks, directly via phone.
 
-```bash
-python main_pipeline.py
-```
-- Processes the CSV using **Pathway**, flags expiring items, saves clean JSONL to `data/processed/output.jsonl`.
+---
 
-### 5. **Build Embeddings Vectorstore**
+## 🧠 How Input is Validated
 
-```bash
-python embed_inventory.py
-```
-- Creates FAISS index for semantic search at `vectorstore/faiss_index`.
-
-### 6. **Test Voice Alerts**
-
-Set your OmniDimension API key, agent ID, and phone number in `voice_alerts.py`. Then:
-
-```bash
-python voice_alerts.py
-```
-- Sends a voice call alert with upcoming expiry info.
-
-### 7. **Launch the Streamlit Dashboard**
-
-```bash
-streamlit run app.py
-```
-- Opens the Inventory Spotter AI dashboard in your browser.
+- **File Presence**: Fails early if the input CSV is missing.
+- **Schema Check**: Uses Pathway schema, raises errors for missing/invalid columns.
+- **Type Checks**: Coerces and checks types (e.g., `int`, `str`, date parsing).
+- **Date Handling**: Invalid or missing dates are logged and not included in expiry calculations.
+- **Logging**: All validation errors are logged, including row counts and any fallback logic.
 
 ---
 
@@ -93,16 +143,6 @@ streamlit run app.py
 - *Which items are located in Aisle F?*
 - *What’s expiring in July?*
 - *Where is Basmati Rice stored?*
-
----
-
-## 🧠 How It Works
-
-1. **ETL Pipeline**: Cleans, deduplicates, and augments the raw inventory data using **Pathway** for robust, reactive stream processing.
-2. **Embeddings Generation**: Each inventory record is summarized and embedded for semantic similarity search.
-3. **Retrieval QA Chain**: When you ask a question, the system finds the most relevant records and uses Ollama LLM to answer, citing the source.
-4. **Expiry Alerts**: Aggregates items expiring in the next two months and dispatches a voice call alert via OmniDimension.
-5. **Streamlit UI**: Interactive, fast, and beautiful — ask free-text questions and see both answers and source snippets.
 
 ---
 
@@ -144,7 +184,7 @@ MIT License. See `LICENSE` file for details.
 
 ## ✨ Demo Screenshots
 
-
+*(Add your screenshots or GIFs here!)*
 
 ---
 
